@@ -11,7 +11,7 @@ export default defineConfig({
       '@': fileURLToPath(new URL('./src', import.meta.url)),
     },
   },
-  base: '/',  // Ensure the correct base URL for assets
+  base: '/', // Ensure the correct base URL for assets
 
   build: {
     rollupOptions: {
