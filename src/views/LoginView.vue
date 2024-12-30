@@ -1,10 +1,38 @@
 <script setup>
 import AppLayout from '@/components/layout/AppLayout.vue'
-import { useDisplay } from 'vuetify'
 import { ref } from 'vue'
+import { supabase } from '@/supabase'
+import { useRouter } from 'vue-router'
 
-const rememberMe = ref(false) // Define the variable using ref
-const { mobile } = useDisplay()
+const router = useRouter()
+const loading = ref(false)
+const error = ref(null)
+
+const form = ref({
+  email: '',
+  password: '',
+})
+
+async function handleLogin() {
+  try {
+    loading.value = true
+    error.value = null
+    
+    const { data, error: authError } = await supabase.auth.signInWithPassword({
+      email: form.value.email,
+      password: form.value.password,
+    })
+
+    if (authError) throw authError
+
+    // Successful login
+    router.push('/dashboard')
+  } catch (e) {
+    error.value = e.message
+  } finally {
+    loading.value = false
+  }
+}
 </script>
 
 <template>
@@ -20,35 +48,54 @@ const { mobile } = useDisplay()
             </template>
 
             <v-card-text class="bg-surface-light pt-4">
-              <v-form fast-fail @submit.prevent>
-                <p>ID Number:</p>
+              <v-form fast-fail @submit.prevent="handleLogin">
+                <v-alert
+                  v-if="error"
+                  type="error"
+                  class="mb-4"
+                  closable
+                  @click:close="error = null"
+                >
+                  {{ error }}
+                </v-alert>
+
+                <p>Email:</p>
                 <v-text-field
-                  prepend-inner-icon="mdi-account"
-                  label="Enter your ID number"
+                  v-model="form.email"
+                  prepend-inner-icon="mdi-email"
+                  label="Enter your email"
                   color="green"
-                  placeholder="ID Number"
+                  placeholder="Email"
+                  :rules="[v => !!v || 'Email is required']"
+                  required
                 ></v-text-field>
 
                 <p>Password:</p>
                 <v-text-field
+                  v-model="form.password"
                   prepend-inner-icon="mdi-lock"
                   label="Enter your password"
                   color="green"
                   placeholder="Password"
                   type="password"
+                  :rules="[v => !!v || 'Password is required']"
+                  required
                 ></v-text-field>
 
-                <v-checkbox label="Remember Me" v-model="rememberMe"></v-checkbox>
-
-                <v-btn class="rounded-s-lg" type="submit" block color="green-darken-3"
-                  >Log in</v-btn
+                <v-btn
+                  class="rounded-s-lg"
+                  type="submit"
+                  block
+                  color="green-darken-3"
+                  :loading="loading"
                 >
+                  Log in
+                </v-btn>
               </v-form>
               <v-divider class="my-5"></v-divider>
               <h5 class="text-center">
-                Don't have an account?<router-link to="/register"
-                  ><b> Click here to Register</b></router-link
-                >
+                Don't have an account?
+                <router-link to="/register"><b>Click here to Register</b></router-link>
               </h5>
             </v-card-text>
           </v-card>
