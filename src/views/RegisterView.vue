@@ -193,7 +193,7 @@ async function handleRegister() {
               <v-divider class="my-5"></v-divider>
               <h5 class="text-center">
                 Already have an account?
-                <RouterLink to="/"><b>Click here to Login</b></RouterLink>
+                <RouterLink to="/" style="color: #000000;"><b>Click here to Login</b></RouterLink>
               </h5>
             </v-card-text>
           </v-card>
