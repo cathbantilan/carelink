@@ -13,6 +13,15 @@ const loading = ref(false)
 const error = ref(null)
 const hasAvailableDoctors = computed(() => doctors.value.length > 0)
 const noAvailableDoctors = computed(() => !loading.value && doctors.value.length === 0)
+const showConfirmDialog = ref(false)
+const confirmDialogAction = ref(null)
+const confirmDialogItem = ref(null)
+const searchQuery = ref('')
+const sortBy = ref({ key: 'created_at', order: 'desc' })
+const filterStatus = ref('all')
+const itemsPerPage = ref(5)
+const showTooltip = ref(false)
+const tab = ref('active')
 
 // Helper function to format time
 function formatTime(time) {
@@ -68,7 +77,7 @@ async function fetchDoctors() {
         last_name,
         specialty,
         email,
-        available_slots!left (
+        available_slots (
           id,
           date,
           time,
@@ -78,6 +87,7 @@ async function fetchDoctors() {
         )
       `)
       .eq('role', 'Doctor')
+      .order('first_name')
 
     if (fetchError) throw fetchError
 
@@ -85,10 +95,9 @@ async function fetchDoctors() {
     doctors.value = (data || [])
       .map(doctor => {
         // Filter available slots for this doctor
-        const availableSlots = (doctor.available_slots || []).filter(slot => {
-          if (!slot?.date || !slot?.time) return false;
+        const doctorSlots = (doctor.available_slots || []).filter(slot => {
+          if (!slot?.date || !slot?.time) return false
           const slotDate = new Date(slot.date)
-          slotDate.setHours(0, 0, 0, 0)
           return !slot.is_booked && slotDate >= today
         })
 
@@ -99,22 +108,28 @@ async function fetchDoctors() {
           specialty: doctor.specialty || 'General Practice',
           fullName: `Dr. ${doctor.first_name} ${doctor.last_name}`,
           email: doctor.email,
-          availableSlots: availableSlots.length,
-          slots: availableSlots
+          availableSlots: doctorSlots.length,
+          slots: doctorSlots.map(slot => ({
+            ...slot,
+            formattedTime: formatTime(slot.time),
+            formattedDate: formatDate(slot.date)
+          }))
         }
       })
-      .filter(doctor => doctor.availableSlots > 0)
-      .sort((a, b) => b.availableSlots - a.availableSlots)
+
+    // Sort doctors by number of available slots
+    doctors.value.sort((a, b) => b.availableSlots - a.availableSlots)
 
     // Restore selected doctor if exists
-    const savedDoctorId = localStorage.getItem('selectedDoctorId')
-    if (savedDoctorId) {
-      const savedDoctor = doctors.value.find(d => d.id === savedDoctorId)
-      if (savedDoctor) {
-        selectedDoctor.value = savedDoctor
-        await fetchAvailableSlots(savedDoctor)
+    if (selectedDoctor.value?.id) {
+      const currentDoctor = doctors.value.find(d => d.id === selectedDoctor.value.id)
+      if (currentDoctor) {
+        selectedDoctor.value = currentDoctor
+        await fetchAvailableSlots(currentDoctor)
       }
     }
+
+    console.log('Fetched doctors:', doctors.value.length)
   } catch (e) {
     error.value = e.message
     console.error('Error fetching doctors:', e)
@@ -125,7 +140,7 @@ async function fetchDoctors() {
 
 // Fetch available slots for selected doctor
 async function fetchAvailableSlots(doctor) {
-  if (!doctor?.id) return;
+  if (!doctor?.id) return
   
   try {
     loading.value = true
@@ -141,7 +156,7 @@ async function fetchAvailableSlots(doctor) {
         duration,
         is_booked,
         notes,
-        doctor:doctor_id (
+        doctor:profiles!doctor_id (
           id,
           first_name,
           last_name,
@@ -157,21 +172,13 @@ async function fetchAvailableSlots(doctor) {
 
     if (fetchError) throw fetchError
 
-    // Map and filter slots
-    availableSlots.value = (data || [])
-      .filter(slot => {
-        if (!slot?.date || !slot?.time) return false;
-        const slotDate = new Date(slot.date)
-        slotDate.setHours(0, 0, 0, 0)
-        return slotDate >= today
-      })
-      .map(slot => ({
-        ...slot,
-        formattedTime: formatTime(slot.time),
-        formattedDate: formatDate(slot.date),
-        doctorName: slot.doctor ? `Dr. ${slot.doctor.first_name} ${slot.doctor.last_name}` : '',
-        specialty: slot.doctor?.specialty || 'General Practice'
-      }))
+    availableSlots.value = (data || []).map(slot => ({
+      ...slot,
+      formattedTime: formatTime(slot.time),
+      formattedDate: formatDate(slot.date),
+      doctorName: `Dr. ${slot.doctor.first_name} ${slot.doctor.last_name}`,
+      specialty: slot.doctor.specialty || 'General Practice'
+    }))
 
     console.log(`Found ${availableSlots.value.length} available slots for doctor ${doctor.fullName}`)
   } catch (e) {
@@ -194,13 +201,13 @@ async function fetchMyAppointments() {
         status,
         notes,
         created_at,
-        slot:slot_id (
+        slot:available_slots!slot_id (
           id,
           date,
           time,
           duration,
           notes,
-          doctor:doctor_id (
+          doctor:profiles!doctor_id (
             first_name,
             last_name,
             specialty,
@@ -216,15 +223,18 @@ async function fetchMyAppointments() {
     myAppointments.value = (data || [])
       .filter(appointment => appointment?.slot?.date && appointment?.slot?.time)
       .map(appointment => ({
-        ...appointment,
+        id: appointment.id,
+        slot_id: appointment.slot.id,
+        status: appointment.status,
         formattedTime: formatTime(appointment.slot.time),
         formattedDate: formatDate(appointment.slot.date),
-        doctorName: appointment.slot.doctor 
-          ? `Dr. ${appointment.slot.doctor.first_name} ${appointment.slot.doctor.last_name}`
-          : 'Unknown Doctor',
-        specialty: appointment.slot.doctor?.specialty || 'General Practice',
-        date: appointment.slot.date
+        doctorName: `Dr. ${appointment.slot.doctor.first_name} ${appointment.slot.doctor.last_name}`,
+        specialty: appointment.slot.doctor.specialty || 'General Practice',
+        date: appointment.slot.date,
+        created_at: appointment.created_at
       }))
+
+    console.log('Fetched appointments:', myAppointments.value.length)
   } catch (e) {
     error.value = e.message
     console.error('Error fetching appointments:', e)
@@ -233,23 +243,39 @@ async function fetchMyAppointments() {
 
 // Book an appointment
 async function bookAppointment(slot) {
-  if (!slot?.id) return;
+  if (!slot?.id) return
   
   try {
     loading.value = true
     const user = await getAuthUser()
 
-    // Start a transaction by using multiple operations
-    const { error: appointmentError } = await supabase
+    // First check if the slot is still available
+    const { data: slotCheck, error: checkError } = await supabase
+      .from('available_slots')
+      .select('is_booked')
+      .eq('id', slot.id)
+      .single()
+
+    if (checkError) throw checkError
+    if (slotCheck.is_booked) {
+      throw new Error('This slot has already been booked. Please choose another time.')
+    }
+
+    // Start transaction
+    const { data: appointment, error: appointmentError } = await supabase
       .from('appointments')
       .insert({
         patient_id: user.id,
         slot_id: slot.id,
-        status: 'pending'
+        status: 'pending',
+        created_at: new Date().toISOString()
       })
+      .select()
+      .single()
 
     if (appointmentError) throw appointmentError
 
+    // Update slot status
     const { error: slotError } = await supabase
       .from('available_slots')
       .update({ is_booked: true })
@@ -262,6 +288,9 @@ async function bookAppointment(slot) {
       fetchAvailableSlots(selectedDoctor.value),
       fetchMyAppointments()
     ])
+
+    // Show success message
+    error.value = null
   } catch (e) {
     error.value = e.message
     console.error('Error booking appointment:', e)
@@ -272,15 +301,29 @@ async function bookAppointment(slot) {
 
 // Cancel an appointment
 async function cancelAppointment(appointment) {
-  if (!appointment?.id || !appointment?.slot_id) return;
+  if (!appointment?.id || !appointment?.slot_id) return
   
   try {
     loading.value = true
 
+    // First check if the appointment can be cancelled
+    const { data: appointmentCheck, error: checkError } = await supabase
+      .from('appointments')
+      .select('status')
+      .eq('id', appointment.id)
+      .single()
+
+    if (checkError) throw checkError
+    if (appointmentCheck.status === 'cancelled') {
+      throw new Error('This appointment is already cancelled.')
+    }
+
     // Update appointment status
     const { error: appointmentError } = await supabase
       .from('appointments')
-      .update({ status: 'cancelled' })
+      .update({ 
+        status: 'cancelled'
+      })
       .eq('id', appointment.id)
 
     if (appointmentError) throw appointmentError
@@ -293,10 +336,19 @@ async function cancelAppointment(appointment) {
 
     if (slotError) throw slotError
 
+    // Refresh data
     await Promise.all([
       fetchAvailableSlots(selectedDoctor.value),
       fetchMyAppointments()
     ])
+
+    // Clear any existing error
+    error.value = null
+    
+    // Close confirmation dialog
+    showConfirmDialog.value = false
+    confirmDialogItem.value = null
+    confirmDialogAction.value = null
   } catch (e) {
     error.value = e.message
     console.error('Error cancelling appointment:', e)
@@ -307,11 +359,24 @@ async function cancelAppointment(appointment) {
 
 // Delete a cancelled appointment
 async function deleteAppointment(appointment) {
-  if (!appointment?.id) return;
+  if (!appointment?.id) return
   
   try {
     loading.value = true
     
+    // First check if the appointment can be deleted
+    const { data: appointmentCheck, error: checkError } = await supabase
+      .from('appointments')
+      .select('status')
+      .eq('id', appointment.id)
+      .single()
+
+    if (checkError) throw checkError
+    if (appointmentCheck.status !== 'cancelled') {
+      throw new Error('Only cancelled appointments can be deleted.')
+    }
+
+    // Delete the appointment
     const { error: deleteError } = await supabase
       .from('appointments')
       .delete()
@@ -320,7 +385,16 @@ async function deleteAppointment(appointment) {
 
     if (deleteError) throw deleteError
 
+    // Refresh appointments
     await fetchMyAppointments()
+
+    // Clear any existing error
+    error.value = null
+    
+    // Close confirmation dialog
+    showConfirmDialog.value = false
+    confirmDialogItem.value = null
+    confirmDialogAction.value = null
   } catch (e) {
     error.value = e.message
     console.error('Error deleting appointment:', e)
@@ -352,6 +426,121 @@ async function handleLogout() {
   } finally {
     loading.value = false
   }
+}
+
+// Add computed properties for filtered and sorted appointments
+const filteredAppointments = computed(() => {
+  let filtered = [...myAppointments.value]
+  
+  // Apply status filter
+  if (filterStatus.value !== 'all') {
+    filtered = filtered.filter(app => app.status === filterStatus.value)
+  }
+
+  // Apply search
+  if (searchQuery.value) {
+    const query = searchQuery.value.toLowerCase()
+    filtered = filtered.filter(app => 
+      app.doctorName.toLowerCase().includes(query) ||
+      app.specialty.toLowerCase().includes(query) ||
+      app.status.toLowerCase().includes(query)
+    )
+  }
+
+  // Apply sorting
+  filtered.sort((a, b) => {
+    const aValue = sortBy.value.key === 'created_at' 
+      ? new Date(a.created_at) 
+      : a[sortBy.value.key]
+    const bValue = sortBy.value.key === 'created_at' 
+      ? new Date(b.created_at) 
+      : b[sortBy.value.key]
+    
+    return sortBy.value.order === 'desc' 
+      ? bValue > aValue ? 1 : -1
+      : aValue > bValue ? 1 : -1
+  })
+
+  return filtered
+})
+
+// Add computed properties for active and past appointments
+const activeAppointments = computed(() => 
+  filteredAppointments.value.filter(app => app.status !== 'cancelled')
+)
+
+const pastAppointments = computed(() => 
+  filteredAppointments.value.filter(app => app.status === 'cancelled')
+)
+
+// Modify the existing cancel appointment function to use confirmation dialog
+async function handleCancelAppointment(appointment) {
+  confirmDialogAction.value = 'cancel'
+  confirmDialogItem.value = appointment
+  showConfirmDialog.value = true
+}
+
+// Modify the existing delete appointment function to use confirmation dialog
+async function handleDeleteAppointment(appointment) {
+  confirmDialogAction.value = 'delete'
+  confirmDialogItem.value = appointment
+  showConfirmDialog.value = true
+}
+
+// Add new function to handle dialog confirmation
+async function handleConfirmDialog() {
+  try {
+    loading.value = true
+    
+    if (confirmDialogAction.value === 'cancel') {
+      await cancelAppointment(confirmDialogItem.value)
+    } else if (confirmDialogAction.value === 'delete') {
+      await deleteAppointment(confirmDialogItem.value)
+    }
+    
+    showConfirmDialog.value = false
+    confirmDialogItem.value = null
+    confirmDialogAction.value = null
+  } catch (e) {
+    error.value = e.message
+    console.error('Error in confirmation dialog:', e)
+  } finally {
+    loading.value = false
+  }
+}
+
+// Add function to get status color
+function getStatusColor(status) {
+  switch (status) {
+    case 'confirmed': return 'success'
+    case 'pending': return 'warning'
+    case 'cancelled': return 'error'
+    default: return 'grey'
+  }
+}
+
+// Add function to get status tooltip
+function getStatusTooltip(status) {
+  switch (status) {
+    case 'confirmed': return 'Appointment confirmed by doctor'
+    case 'pending': return 'Waiting for doctor confirmation'
+    case 'cancelled': return 'Appointment cancelled'
+    default: return 'Unknown status'
+  }
+}
+
+// Add function to format relative time
+function getRelativeTime(date) {
+  const now = new Date()
+  const appointmentDate = new Date(date)
+  const diffTime = appointmentDate - now
+  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24))
+  
+  if (diffDays < 0) return 'Past appointment'
+  if (diffDays === 0) return 'Today'
+  if (diffDays === 1) return 'Tomorrow'
+  if (diffDays < 7) return `In ${diffDays} days`
+  return `In ${Math.ceil(diffDays/7)} weeks`
 }
 
 onMounted(async () => {
@@ -507,57 +696,232 @@ onMounted(async () => {
           </v-card-text>
         </v-card>
 
-        <!-- My Appointments -->
+        <!-- Add this before the My Appointments card -->
+        <v-dialog v-model="showConfirmDialog" max-width="500px">
+          <v-card>
+            <v-card-title class="text-h5">Confirm Action</v-card-title>
+            <v-card-text>
+              Are you sure you want to {{ confirmDialogAction }} this appointment?
+              <template v-if="confirmDialogItem">
+                <div class="mt-4">
+                  <strong>Date:</strong> {{ confirmDialogItem.formattedDate }}<br>
+                  <strong>Time:</strong> {{ confirmDialogItem.formattedTime }}<br>
+                  <strong>Doctor:</strong> {{ confirmDialogItem.doctorName }}
+                </div>
+              </template>
+            </v-card-text>
+            <v-card-actions>
+              <v-spacer></v-spacer>
+              <v-btn
+                color="grey-darken-1"
+                variant="text"
+                @click="showConfirmDialog = false"
+              >
+                Cancel
+              </v-btn>
+              <v-btn
+                :color="confirmDialogAction === 'delete' ? 'error' : 'primary'"
+                variant="text"
+                @click="handleConfirmDialog"
+                :loading="loading"
+              >
+                Confirm
+              </v-btn>
+            </v-card-actions>
+          </v-card>
+        </v-dialog>
+
+        <!-- Update the My Appointments card -->
         <v-card>
-          <v-card-title class="text-h5 pa-4">
-            My Appointments
+          <v-card-title class="text-h5 pa-4 d-flex align-center">
+            <span>My Appointments</span>
+            <v-spacer></v-spacer>
+            <v-text-field
+              v-model="searchQuery"
+              append-icon="mdi-magnify"
+              label="Search"
+              single-line
+              hide-details
+              density="compact"
+              class="ml-4"
+              style="max-width: 200px"
+            ></v-text-field>
+            <v-select
+              v-model="filterStatus"
+              :items="[
+                { title: 'All', value: 'all' },
+                { title: 'Pending', value: 'pending' },
+                { title: 'Confirmed', value: 'confirmed' },
+                { title: 'Cancelled', value: 'cancelled' }
+              ]"
+              label="Status"
+              density="compact"
+              hide-details
+              class="ml-4"
+              style="max-width: 150px"
+            ></v-select>
           </v-card-title>
           
           <v-card-text>
-            <v-data-table
-              :headers="[
-                { title: 'Date', key: 'slot.date', align: 'start' },
-                { title: 'Time', key: 'formattedTime', align: 'start' },
-                { title: 'Doctor', key: 'doctorName', align: 'start' },
-                { title: 'Specialty', key: 'specialty', align: 'start' },
-                { title: 'Status', key: 'status', align: 'start' },
-                { title: 'Actions', key: 'actions', align: 'center' }
-              ]"
-              :items="myAppointments"
-              :loading="loading"
-              class="elevation-1"
-            >
-              <template v-slot:item.status="{ item }">
-                <v-chip
-                  :color="item.status === 'confirmed' ? 'success' : item.status === 'pending' ? 'warning' : 'error'"
-                  size="small"
-                >
-                  {{ item.status }}
-                </v-chip>
-              </template>
+            <v-tabs v-model="tab">
+              <v-tab value="active">Active Appointments</v-tab>
+              <v-tab value="past">Past Appointments</v-tab>
+            </v-tabs>
 
-              <template v-slot:item.actions="{ item }">
-                <div class="d-flex gap-2">
-                  <v-btn
-                    v-if="item.status !== 'cancelled'"
-                    color="error"
-                    size="small"
-                    @click="cancelAppointment(item)"
-                  >
-                    Cancel
-                  </v-btn>
-                  <v-btn
-                    v-if="item.status === 'cancelled'"
-                    color="error"
-                    size="small"
-                    variant="outlined"
-                    @click="deleteAppointment(item)"
-                  >
-                    Delete
-                  </v-btn>
-                </div>
-              </template>
-            </v-data-table>
+            <v-window v-model="tab">
+              <v-window-item value="active">
+                <v-data-table
+                  :headers="[
+                    { 
+                      title: 'Date & Time',
+                      key: 'datetime',
+                      align: 'start',
+                      sortable: true
+                    },
+                    { 
+                      title: 'Doctor',
+                      key: 'doctorName',
+                      align: 'start',
+                      sortable: true
+                    },
+                    { 
+                      title: 'Specialty',
+                      key: 'specialty',
+                      align: 'start'
+                    },
+                    { 
+                      title: 'Status',
+                      key: 'status',
+                      align: 'start',
+                      sortable: true
+                    },
+                    { 
+                      title: 'When',
+                      key: 'relative',
+                      align: 'start'
+                    },
+                    { 
+                      title: 'Actions',
+                      key: 'actions',
+                      align: 'center'
+                    }
+                  ]"
+                  :items="activeAppointments"
+                  :loading="loading"
+                  :items-per-page="itemsPerPage"
+                  class="elevation-1"
+                >
+                  <template v-slot:item.datetime="{ item }">
+                    <div>{{ item.formattedDate }}</div>
+                    <div class="text-caption">{{ item.formattedTime }}</div>
+                  </template>
+
+                  <template v-slot:item.relative="{ item }">
+                    <div>{{ getRelativeTime(item.date) }}</div>
+                  </template>
+
+                  <template v-slot:item.status="{ item }">
+                    <v-tooltip :text="getStatusTooltip(item.status)">
+                      <template v-slot:activator="{ props }">
+                        <v-chip
+                          v-bind="props"
+                          :color="getStatusColor(item.status)"
+                          size="small"
+                        >
+                          {{ item.status }}
+                        </v-chip>
+                      </template>
+                    </v-tooltip>
+                  </template>
+
+                  <template v-slot:item.actions="{ item }">
+                    <div class="d-flex gap-2">
+                      <v-btn
+                        v-if="item.status !== 'cancelled'"
+                        color="error"
+                        size="small"
+                        @click="handleCancelAppointment(item)"
+                        :loading="loading"
+                      >
+                        Cancel
+                      </v-btn>
+                    </div>
+                  </template>
+                </v-data-table>
+              </v-window-item>
+
+              <v-window-item value="past">
+                <v-data-table
+                  :headers="[
+                    { 
+                      title: 'Date & Time',
+                      key: 'datetime',
+                      align: 'start',
+                      sortable: true
+                    },
+                    { 
+                      title: 'Doctor',
+                      key: 'doctorName',
+                      align: 'start',
+                      sortable: true
+                    },
+                    { 
+                      title: 'Specialty',
+                      key: 'specialty',
+                      align: 'start'
+                    },
+                    { 
+                      title: 'Status',
+                      key: 'status',
+                      align: 'start'
+                    },
+                    { 
+                      title: 'Actions',
+                      key: 'actions',
+                      align: 'center'
+                    }
+                  ]"
+                  :items="pastAppointments"
+                  :loading="loading"
+                  :items-per-page="itemsPerPage"
+                  class="elevation-1"
+                >
+                  <template v-slot:item.datetime="{ item }">
+                    <div>{{ item.formattedDate }}</div>
+                    <div class="text-caption">{{ item.formattedTime }}</div>
+                  </template>
+
+                  <template v-slot:item.status="{ item }">
+                    <v-tooltip :text="getStatusTooltip(item.status)">
+                      <template v-slot:activator="{ props }">
+                        <v-chip
+                          v-bind="props"
+                          :color="getStatusColor(item.status)"
+                          size="small"
+                        >
+                          {{ item.status }}
+                        </v-chip>
+                      </template>
+                    </v-tooltip>
+                  </template>
+
+                  <template v-slot:item.actions="{ item }">
+                    <div class="d-flex gap-2">
+                      <v-btn
+                        v-if="item.status === 'cancelled'"
+                        color="error"
+                        size="small"
+                        variant="outlined"
+                        @click="handleDeleteAppointment(item)"
+                        :loading="loading"
+                      >
+                        Delete
+                      </v-btn>
+                    </div>
+                  </template>
+                </v-data-table>
+              </v-window-item>
+            </v-window>
           </v-card-text>
         </v-card>
       </v-container>
@@ -618,5 +982,49 @@ onMounted(async () => {
 
 .v-btn.v-btn--size-small {
   min-width: 80px;
+}
+
+/* Add styles for the new features */
+.v-data-table .text-caption {
+  color: rgba(0, 0, 0, 0.6);
+}
+
+.v-card-title .v-text-field {
+  max-width: 200px;
+}
+
+.v-card-title .v-select {
+  max-width: 150px;
+}
+
+.v-tabs {
+  margin-bottom: 16px;
+}
+
+.v-window {
+  margin-top: 16px;
+}
+
+.v-tooltip {
+  display: inline-block;
+}
+
+.v-dialog .mt-4 {
+  margin-top: 16px;
+}
+
+/* Add responsive styles */
+@media (max-width: 600px) {
+  .v-card-title {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .v-card-title .v-text-field,
+  .v-card-title .v-select {
+    max-width: 100%;
+    margin-left: 0;
+    margin-top: 8px;
+  }
 }
 </style> 
