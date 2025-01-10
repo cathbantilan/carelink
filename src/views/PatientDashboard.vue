@@ -22,6 +22,9 @@ const filterStatus = ref('all')
 const itemsPerPage = ref(5)
 const showTooltip = ref(false)
 const tab = ref('active')
+const showNotesDialog = ref(false)
+const selectedAppointment = ref(null)
+const patientProfile = ref(null)
 
 // Helper function to format time
 function formatTime(time) {
@@ -102,11 +105,11 @@ async function fetchDoctors() {
         })
 
         return {
-          id: doctor.id,
-          first_name: doctor.first_name,
-          last_name: doctor.last_name,
-          specialty: doctor.specialty || 'General Practice',
-          fullName: `Dr. ${doctor.first_name} ${doctor.last_name}`,
+        id: doctor.id,
+        first_name: doctor.first_name,
+        last_name: doctor.last_name,
+        specialty: doctor.specialty || 'General Practice',
+        fullName: `Dr. ${doctor.first_name} ${doctor.last_name}`,
           email: doctor.email,
           availableSlots: doctorSlots.length,
           slots: doctorSlots.map(slot => ({
@@ -158,10 +161,15 @@ async function fetchAvailableSlots(doctor) {
         notes,
         doctor:profiles!doctor_id (
           id,
-          first_name,
-          last_name,
+            first_name,
+            last_name,
           specialty,
           email
+        ),
+        appointments (
+          id,
+          status,
+          notes
         )
       `)
       .eq('doctor_id', doctor.id)
@@ -172,12 +180,20 @@ async function fetchAvailableSlots(doctor) {
 
     if (fetchError) throw fetchError
 
-    availableSlots.value = (data || []).map(slot => ({
+    availableSlots.value = (data || [])
+      .filter(slot => {
+        // Filter out slots that have pending or confirmed appointments
+        const hasActiveAppointment = slot.appointments?.some(
+          app => app.status === 'pending' || app.status === 'confirmed'
+        )
+        return !hasActiveAppointment
+      })
+      .map(slot => ({
       ...slot,
       formattedTime: formatTime(slot.time),
-      formattedDate: formatDate(slot.date),
-      doctorName: `Dr. ${slot.doctor.first_name} ${slot.doctor.last_name}`,
-      specialty: slot.doctor.specialty || 'General Practice'
+        formattedDate: formatDate(slot.date),
+        doctorName: `Dr. ${slot.doctor.first_name} ${slot.doctor.last_name}`,
+        specialty: slot.doctor.specialty || 'General Practice'
     }))
 
     console.log(`Found ${availableSlots.value.length} available slots for doctor ${doctor.fullName}`)
@@ -208,8 +224,8 @@ async function fetchMyAppointments() {
           duration,
           notes,
           doctor:profiles!doctor_id (
-            first_name,
-            last_name,
+              first_name,
+              last_name,
             specialty,
             email
           )
@@ -226,12 +242,13 @@ async function fetchMyAppointments() {
         id: appointment.id,
         slot_id: appointment.slot.id,
         status: appointment.status,
-        formattedTime: formatTime(appointment.slot.time),
+      formattedTime: formatTime(appointment.slot.time),
         formattedDate: formatDate(appointment.slot.date),
         doctorName: `Dr. ${appointment.slot.doctor.first_name} ${appointment.slot.doctor.last_name}`,
         specialty: appointment.slot.doctor.specialty || 'General Practice',
         date: appointment.slot.date,
-        created_at: appointment.created_at
+        created_at: appointment.created_at,
+        notes: appointment.notes
       }))
 
     console.log('Fetched appointments:', myAppointments.value.length)
@@ -252,12 +269,23 @@ async function bookAppointment(slot) {
     // First check if the slot is still available
     const { data: slotCheck, error: checkError } = await supabase
       .from('available_slots')
-      .select('is_booked')
+      .select(`
+        id, 
+        is_booked,
+        appointments (
+          id,
+          status
+        )
+      `)
       .eq('id', slot.id)
       .single()
 
     if (checkError) throw checkError
-    if (slotCheck.is_booked) {
+    
+    // Check both is_booked flag and existing active appointments
+    if (slotCheck.is_booked || slotCheck.appointments?.some(
+      app => app.status === 'pending' || app.status === 'confirmed'
+    )) {
       throw new Error('This slot has already been booked. Please choose another time.')
     }
 
@@ -543,9 +571,35 @@ function getRelativeTime(date) {
   return `In ${Math.ceil(diffDays/7)} weeks`
 }
 
+// Add this function to handle opening the notes dialog
+function openNotesDialog(appointment) {
+  selectedAppointment.value = appointment
+  showNotesDialog.value = true
+}
+
+// Add function to fetch patient's profile
+async function fetchPatientProfile() {
+  try {
+    const user = await getAuthUser()
+    
+    const { data, error: profileError } = await supabase
+      .from('profiles')
+      .select('first_name, last_name')
+      .eq('id', user.id)
+      .single()
+
+    if (profileError) throw profileError
+    
+    patientProfile.value = data
+  } catch (e) {
+    console.error('Error fetching patient profile:', e)
+  }
+}
+
 onMounted(async () => {
   try {
     await Promise.all([
+      fetchPatientProfile(),
       fetchDoctors(),
       fetchMyAppointments()
     ])
@@ -562,7 +616,10 @@ onMounted(async () => {
       <v-container>
         <v-row class="mb-6">
           <v-col cols="12" class="d-flex justify-space-between align-center">
-            <h1 class="text-h4">Patient Dashboard</h1>
+            <div>
+              <h1 class="text-h4 mb-2">Hello, {{ patientProfile?.first_name || 'Patient' }}!</h1>
+              <div class="text-subtitle-1 text-grey">Welcome to your appointments dashboard</div>
+            </div>
             <v-btn
               color="error"
               @click="handleLogout"
@@ -770,8 +827,8 @@ onMounted(async () => {
 
             <v-window v-model="tab">
               <v-window-item value="active">
-                <v-data-table
-                  :headers="[
+            <v-data-table
+              :headers="[
                     { 
                       title: 'Date & Time',
                       key: 'datetime',
@@ -807,10 +864,10 @@ onMounted(async () => {
                     }
                   ]"
                   :items="activeAppointments"
-                  :loading="loading"
+              :loading="loading"
                   :items-per-page="itemsPerPage"
-                  class="elevation-1"
-                >
+              class="elevation-1"
+            >
                   <template v-slot:item.datetime="{ item }">
                     <div>{{ item.formattedDate }}</div>
                     <div class="text-caption">{{ item.formattedTime }}</div>
@@ -820,31 +877,42 @@ onMounted(async () => {
                     <div>{{ getRelativeTime(item.date) }}</div>
                   </template>
 
-                  <template v-slot:item.status="{ item }">
+              <template v-slot:item.status="{ item }">
                     <v-tooltip :text="getStatusTooltip(item.status)">
                       <template v-slot:activator="{ props }">
-                        <v-chip
+                <v-chip
                           v-bind="props"
                           :color="getStatusColor(item.status)"
-                          size="small"
-                        >
-                          {{ item.status }}
-                        </v-chip>
+                  size="small"
+                >
+                  {{ item.status }}
+                </v-chip>
                       </template>
                     </v-tooltip>
-                  </template>
+              </template>
 
-                  <template v-slot:item.actions="{ item }">
+              <template v-slot:item.actions="{ item }">
                     <div class="d-flex gap-2">
                       <v-btn
-                        v-if="item.status !== 'cancelled'"
-                        color="error"
+                        v-if="item.notes"
+                        color="info"
                         size="small"
+                        variant="tonal"
+                        prepend-icon="mdi-note-text"
+                        @click="openNotesDialog(item)"
+                        class="mr-2"
+                      >
+                        View Notes
+                      </v-btn>
+                <v-btn
+                  v-if="item.status !== 'cancelled'"
+                  color="error"
+                  size="small"
                         @click="handleCancelAppointment(item)"
                         :loading="loading"
-                      >
-                        Cancel
-                      </v-btn>
+                >
+                  Cancel
+                </v-btn>
                     </div>
                   </template>
                 </v-data-table>
@@ -873,6 +941,11 @@ onMounted(async () => {
                     { 
                       title: 'Status',
                       key: 'status',
+                      align: 'start'
+                    },
+                    { 
+                      title: 'Notes',
+                      key: 'notes',
                       align: 'start'
                     },
                     { 
@@ -905,8 +978,32 @@ onMounted(async () => {
                     </v-tooltip>
                   </template>
 
+                  <template v-slot:item.notes="{ item }">
+                    <div v-if="item.notes" class="text-truncate" style="max-width: 200px;">
+                      <v-tooltip :text="item.notes">
+                        <template v-slot:activator="{ props }">
+                          <span v-bind="props" class="text-caption">
+                            {{ item.notes }}
+                          </span>
+                        </template>
+                      </v-tooltip>
+                    </div>
+                    <span v-else class="text-caption text-disabled">No notes</span>
+                  </template>
+
                   <template v-slot:item.actions="{ item }">
                     <div class="d-flex gap-2">
+                      <v-btn
+                        v-if="item.notes"
+                        color="info"
+                        size="small"
+                        variant="tonal"
+                        prepend-icon="mdi-note-text"
+                        @click="openNotesDialog(item)"
+                        class="mr-2"
+                      >
+                        View Notes
+                      </v-btn>
                       <v-btn
                         v-if="item.status === 'cancelled'"
                         color="error"
@@ -918,12 +1015,65 @@ onMounted(async () => {
                         Delete
                       </v-btn>
                     </div>
-                  </template>
-                </v-data-table>
+              </template>
+            </v-data-table>
               </v-window-item>
             </v-window>
           </v-card-text>
         </v-card>
+
+        <!-- Doctor's Notes Dialog -->
+        <v-dialog v-model="showNotesDialog" max-width="500">
+          <v-card>
+            <v-card-title class="text-h5 pa-4">
+              <v-icon icon="mdi-note-text" class="mr-2" color="primary"></v-icon>
+              Doctor's Notes
+            </v-card-title>
+            
+            <v-card-text>
+              <div v-if="selectedAppointment" class="mb-4">
+                <div class="d-flex align-center mb-2">
+                  <v-icon icon="mdi-calendar" class="mr-2" color="primary"></v-icon>
+                  <strong>Appointment:</strong>
+                  <span class="ml-2">{{ selectedAppointment.formattedDate }}</span>
+                </div>
+                <div class="d-flex align-center mb-2">
+                  <v-icon icon="mdi-clock" class="mr-2" color="primary"></v-icon>
+                  <strong>Time:</strong>
+                  <span class="ml-2">{{ selectedAppointment.formattedTime }}</span>
+                </div>
+                <div class="d-flex align-center mb-4">
+                  <v-icon icon="mdi-doctor" class="mr-2" color="primary"></v-icon>
+                  <strong>Doctor:</strong>
+                  <span class="ml-2">{{ selectedAppointment.doctorName }}</span>
+                </div>
+                
+                <v-divider class="mb-4"></v-divider>
+                
+                <div class="notes-content pa-4 bg-grey-lighten-4 rounded-lg">
+                  <div class="d-flex align-center mb-2">
+                    <v-icon icon="mdi-note-text" class="mr-2" color="primary"></v-icon>
+                    <strong>Notes from your doctor:</strong>
+                  </div>
+                  <p class="text-body-1 mt-2" style="white-space: pre-line">
+                    {{ selectedAppointment.notes || 'No additional notes from the doctor.' }}
+                  </p>
+                </div>
+              </div>
+            </v-card-text>
+            
+            <v-card-actions>
+              <v-spacer></v-spacer>
+              <v-btn
+                color="primary"
+                variant="text"
+                @click="showNotesDialog = false"
+              >
+                Close
+              </v-btn>
+            </v-card-actions>
+          </v-card>
+        </v-dialog>
       </v-container>
     </template>
   </AppLayout>
@@ -1026,5 +1176,39 @@ onMounted(async () => {
     margin-left: 0;
     margin-top: 8px;
   }
+}
+
+.notes-content {
+  border-left: 4px solid #1976d2;
+}
+
+.v-icon {
+  opacity: 0.9;
+}
+
+/* Add a subtle animation for the notes button */
+.v-btn.v-btn--size-small {
+  transition: all 0.2s ease;
+}
+
+.v-btn.v-btn--size-small:hover {
+  transform: translateY(-1px);
+}
+
+/* Add a notification dot for appointments with notes */
+.has-notes {
+  position: relative;
+}
+
+.has-notes::after {
+  content: '';
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  width: 8px;
+  height: 8px;
+  background-color: #1976d2;
+  border-radius: 50%;
+  border: 2px solid white;
 }
 </style> 

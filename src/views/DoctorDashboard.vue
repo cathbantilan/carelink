@@ -23,6 +23,8 @@ const searchQuery = ref('')
 const showActionDialog = ref(false)
 const actionDialogType = ref(null) // 'cancel' or 'delete'
 const selectedSlot = ref(null)
+const cancellationNotes = ref('')
+const doctorProfile = ref(null)
 
 // Time slots in 24-hour format with AM/PM
 const timeSlots = [
@@ -40,7 +42,10 @@ const timeSlots = [
   { value: '15:30', label: '3:30 PM' },
   { value: '16:00', label: '4:00 PM' },
   { value: '16:30', label: '4:30 PM' }
-]
+].map(slot => ({
+  ...slot,
+  key: `${slot.value}-${slot.label}` // Add unique key for each slot
+}))
 
 const durationOptions = [
   { value: 30, label: '30 minutes' },
@@ -104,7 +109,9 @@ async function fetchMySlots() {
           id,
           status,
           notes,
+          created_at,
           patient:patient_id (
+            id,
             first_name,
             last_name,
             email
@@ -112,25 +119,29 @@ async function fetchMySlots() {
         )
       `)
       .eq('doctor_id', user.id)
-      .order('date')
-      .order('time')
+      .order('date', { ascending: true })
+      .order('time', { ascending: true })
 
     if (fetchError) throw fetchError
     
-    availableSlots.value = (data || [])
-      .filter(slot => slot && slot.date && slot.time)
-      .map(slot => {
-        const appointment = slot.appointments?.[0]
-        return {
-          ...slot,
-          formattedTime: formatTime(slot.time),
-          formattedDate: formatDate(slot.date),
-          appointmentStatus: appointment?.status || null,
-          patientName: appointment?.patient 
-            ? `${appointment.patient.first_name} ${appointment.patient.last_name}`
-            : null
-        }
-      })
+    // Map the slots with proper formatting and filtering
+    availableSlots.value = (data || []).map(slot => {
+      const activeAppointment = slot.appointments?.find(
+        app => app.status === 'pending' || app.status === 'confirmed'
+      )
+      
+      return {
+        ...slot,
+        formattedTime: formatTime(slot.time),
+        formattedDate: formatDate(slot.date),
+        appointmentStatus: activeAppointment?.status || null,
+        patientName: activeAppointment?.patient 
+          ? `${activeAppointment.patient.first_name} ${activeAppointment.patient.last_name}`
+          : null,
+        patientId: activeAppointment?.patient?.id || null,
+        appointments: slot.appointments || []
+      }
+    })
 
     console.log(`Found ${availableSlots.value.length} total slots`)
   } catch (e) {
@@ -221,7 +232,7 @@ async function addTimeSlot() {
       .eq('date', newSlot.value.date)
       .eq('time', timeValue)
       .eq('doctor_id', user.id)
-      .single()
+      .maybeSingle()
 
     if (existingSlot) {
       throw new Error('You already have a slot at this time')
@@ -235,18 +246,25 @@ async function addTimeSlot() {
         date: newSlot.value.date,
         time: timeValue,
         duration: newSlot.value.duration || 30,
-        notes: newSlot.value.notes || '',
+        notes: newSlot.value.notes?.trim() || '',
         is_booked: false
       })
 
     if (insertError) throw insertError
 
-    // Reset form and refresh data
-    newSlot.value = { date: null, time: '', duration: 30, notes: '' }
-    await Promise.all([
-      fetchMySlots(),
-      fetchAppointments()
-    ])
+    // Reset form
+    newSlot.value = { 
+      date: null, 
+      time: '', 
+      duration: 30, 
+      notes: '' 
+    }
+
+    // Refresh data
+    await fetchMySlots()
+
+    // Clear any existing error
+    error.value = null
   } catch (e) {
     error.value = e.message
     console.error('Error adding time slot:', e)
@@ -318,7 +336,7 @@ async function handleLogout() {
   }
 }
 
-async function updateSlotStatus(slot) {
+async function updateSlotStatus(slot, notes = '') {
   if (!slot?.id) return;
   
   try {
@@ -328,6 +346,25 @@ async function updateSlotStatus(slot) {
       notes: !slot.is_booked ? 'Marked as unavailable by doctor' : null
     }
 
+    // First check for any active appointments
+    const activeAppointment = slot.appointments?.find(
+      app => app.status === 'pending' || app.status === 'confirmed'
+    )
+
+    if (activeAppointment) {
+      // If marking as unavailable, cancel the appointment with notes
+      const { error: appointmentError } = await supabase
+        .from('appointments')
+        .update({ 
+          status: 'cancelled',
+          notes: notes || 'Cancelled by doctor'
+        })
+        .eq('id', activeAppointment.id)
+
+      if (appointmentError) throw appointmentError
+    }
+
+    // Update slot status
     const { error: updateError } = await supabase
       .from('available_slots')
       .update(updates)
@@ -335,23 +372,15 @@ async function updateSlotStatus(slot) {
 
     if (updateError) throw updateError
 
-    // If marking as unavailable and there's an appointment, cancel it
-    if (!slot.is_booked && slot.appointments?.[0]?.id) {
-      const { error: appointmentError } = await supabase
-        .from('appointments')
-        .update({ 
-          status: 'cancelled',
-          notes: 'Cancelled - slot marked as unavailable by doctor'
-        })
-        .eq('id', slot.appointments[0].id)
-
-      if (appointmentError) throw appointmentError
-    }
-
     await Promise.all([
       fetchMySlots(),
       fetchAppointments()
     ])
+
+    // Close dialog and clear selection
+    showActionDialog.value = false
+    selectedSlot.value = null
+    actionDialogType.value = null
   } catch (e) {
     error.value = e.message
     console.error('Error updating slot status:', e)
@@ -366,10 +395,13 @@ const upcomingSlots = computed(() => {
   
   return availableSlots.value
     .filter(slot => {
+      // Filter for upcoming dates
       const slotDate = new Date(slot.date)
+      slotDate.setHours(0, 0, 0, 0)
       return slotDate >= today
     })
     .filter(slot => {
+      // Apply search filter if exists
       if (!searchQuery.value) return true
       const query = searchQuery.value.toLowerCase()
       return (
@@ -378,6 +410,19 @@ const upcomingSlots = computed(() => {
         (slot.patientName && slot.patientName.toLowerCase().includes(query)) ||
         (slot.appointmentStatus && slot.appointmentStatus.toLowerCase().includes(query))
       )
+    })
+    .sort((a, b) => {
+      // Sort by date first
+      const dateA = new Date(a.date)
+      const dateB = new Date(b.date)
+      const dateDiff = dateA - dateB
+      
+      // If same date, sort by time
+      if (dateDiff === 0) {
+        return a.time.localeCompare(b.time)
+      }
+      
+      return dateDiff
     })
 })
 
@@ -388,6 +433,7 @@ const pastSlots = computed(() => {
   return availableSlots.value
     .filter(slot => {
       const slotDate = new Date(slot.date)
+      slotDate.setHours(0, 0, 0, 0)
       return slotDate < today
     })
     .filter(slot => {
@@ -399,6 +445,18 @@ const pastSlots = computed(() => {
         (slot.patientName && slot.patientName.toLowerCase().includes(query)) ||
         (slot.appointmentStatus && slot.appointmentStatus.toLowerCase().includes(query))
       )
+    })
+    .sort((a, b) => {
+      // Sort by date in descending order
+      const dateA = new Date(a.date)
+      const dateB = new Date(b.date)
+      if (dateA > dateB) return -1
+      if (dateA < dateB) return 1
+      
+      // If same date, sort by time
+      const timeA = a.time
+      const timeB = b.time
+      return timeA.localeCompare(timeB)
     })
 })
 
@@ -433,28 +491,13 @@ async function deleteSlot(slot) {
   try {
     loading.value = true
 
-    // First check if the slot has any appointments
-    const { data: appointmentCheck, error: checkError } = await supabase
-      .from('appointments')
-      .select('id, status')
-      .eq('slot_id', slot.id)
-      .single()
+    // Check for active appointments
+    const hasActiveAppointment = slot.appointments?.some(
+      app => app.status === 'pending' || app.status === 'confirmed'
+    )
 
-    if (checkError && checkError.code !== 'PGRST116') throw checkError // PGRST116 means no rows returned
-
-    if (appointmentCheck && appointmentCheck.status !== 'cancelled') {
+    if (hasActiveAppointment) {
       throw new Error('Cannot delete slot with active appointment')
-    }
-
-    // Delete any cancelled appointments first
-    if (appointmentCheck) {
-      const { error: appointmentDeleteError } = await supabase
-        .from('appointments')
-        .delete()
-        .eq('slot_id', slot.id)
-        .eq('status', 'cancelled')
-
-      if (appointmentDeleteError) throw appointmentDeleteError
     }
 
     // Delete the slot
@@ -466,10 +509,7 @@ async function deleteSlot(slot) {
     if (deleteError) throw deleteError
 
     // Refresh data
-    await Promise.all([
-      fetchMySlots(),
-      fetchAppointments()
-    ])
+    await fetchMySlots()
 
     // Close dialog and clear selection
     showActionDialog.value = false
@@ -495,13 +535,85 @@ async function handleActionConfirm() {
   if (actionDialogType.value === 'delete') {
     await deleteSlot(selectedSlot.value)
   } else if (actionDialogType.value === 'cancel') {
-    await updateSlotStatus(selectedSlot.value)
+    await updateSlotStatus(selectedSlot.value, cancellationNotes.value)
+  }
+
+  // Clear the notes after action
+  cancellationNotes.value = ''
+}
+
+const analytics = computed(() => {
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+
+  // Count all available slots (not booked)
+  const availableCount = upcomingSlots.value.filter(slot => !slot.is_booked).length
+
+  // Count pending appointments
+  const pendingAppointments = upcomingSlots.value.filter(
+    slot => slot.appointmentStatus === 'pending'
+  ).length
+
+  // Count confirmed appointments
+  const confirmedAppointments = upcomingSlots.value.filter(
+    slot => slot.appointmentStatus === 'confirmed'
+  ).length
+
+  // Count today's appointments
+  const todayAppointments = upcomingSlots.value.filter(slot => {
+    const slotDate = new Date(slot.date)
+    slotDate.setHours(0, 0, 0, 0)
+    return slotDate.getTime() === today.getTime() && 
+           (slot.appointmentStatus === 'pending' || slot.appointmentStatus === 'confirmed')
+  }).length
+
+  return {
+    totalSlots: availableCount,
+    pendingAppointments,
+    confirmedAppointments,
+    todayAppointments
+  }
+})
+
+// Add a function to validate time slot selection
+function validateTimeSlot(date, time) {
+  if (!date || !time) return false
+  
+  const selectedDateTime = new Date(`${date}T${time}`)
+  const now = new Date()
+  
+  // Cannot select past time
+  if (selectedDateTime < now) {
+    error.value = 'Cannot select a past time'
+    return false
+  }
+  
+  return true
+}
+
+// Add function to fetch doctor's profile
+async function fetchDoctorProfile() {
+  try {
+    const user = await getAuthUser()
+    
+    const { data, error: profileError } = await supabase
+      .from('profiles')
+      .select('first_name, last_name, specialty')
+      .eq('id', user.id)
+      .single()
+
+    if (profileError) throw profileError
+    
+    doctorProfile.value = data
+  } catch (e) {
+    console.error('Error fetching doctor profile:', e)
   }
 }
 
 onMounted(async () => {
   try {
     await Promise.all([
+      fetchDoctorProfile(),
       fetchMySlots(),
       fetchAppointments()
     ])
@@ -520,22 +632,10 @@ onMounted(async () => {
         <v-row class="mb-6">
           <v-col cols="12" class="d-flex justify-space-between align-center">
             <div>
-              <h1 class="text-h4 mb-2">Doctor Dashboard</h1>
-              <v-chip
-                color="primary"
-                size="small"
-                class="mr-2"
-                prepend-icon="mdi-calendar-clock"
-              >
-                {{ availableSlots.length }} Total Slots
-              </v-chip>
-              <v-chip
-                :color="appointments.filter(a => a.status === 'pending').length > 0 ? 'warning' : 'success'"
-                size="small"
-                prepend-icon="mdi-clock-alert"
-              >
-                {{ appointments.filter(a => a.status === 'pending').length }} Pending Appointments
-              </v-chip>
+              <h1 class="text-h4 mb-2">Hello, Dr. {{ doctorProfile?.last_name || 'Doctor' }}!</h1>
+              <div class="text-subtitle-1 text-grey">
+                {{ doctorProfile?.specialty ? `Specialty: ${doctorProfile.specialty}` : 'Welcome to your dashboard' }}
+              </div>
             </div>
             <v-btn
               color="error"
@@ -549,6 +649,73 @@ onMounted(async () => {
           </v-col>
         </v-row>
         
+        <!-- Analytics Cards -->
+        <v-row class="mb-6">
+          <v-col cols="12" sm="6" md="3">
+            <v-card class="analytics-card" elevation="2" :color="analytics.todayAppointments > 0 ? 'primary' : ''">
+              <v-card-text>
+                <div class="d-flex justify-space-between align-center">
+                  <div>
+                    <div class="text-h4 mb-1">{{ analytics.todayAppointments }}</div>
+                    <div class="text-caption">Today's Appointments</div>
+                  </div>
+                  <v-icon size="48" :color="analytics.todayAppointments > 0 ? 'white' : 'primary'">
+                    mdi-calendar-today
+                  </v-icon>
+                </div>
+              </v-card-text>
+            </v-card>
+          </v-col>
+
+          <v-col cols="12" sm="6" md="3">
+            <v-card class="analytics-card" elevation="2" :color="analytics.pendingAppointments > 0 ? 'warning' : ''">
+              <v-card-text>
+                <div class="d-flex justify-space-between align-center">
+                  <div>
+                    <div class="text-h4 mb-1">{{ analytics.pendingAppointments }}</div>
+                    <div class="text-caption">Pending Confirmations</div>
+                  </div>
+                  <v-icon size="48" :color="analytics.pendingAppointments > 0 ? 'white' : 'warning'">
+                    mdi-clock-alert
+                  </v-icon>
+                </div>
+              </v-card-text>
+            </v-card>
+          </v-col>
+
+          <v-col cols="12" sm="6" md="3">
+            <v-card class="analytics-card" elevation="2" :color="analytics.confirmedAppointments > 0 ? 'success' : ''">
+              <v-card-text>
+                <div class="d-flex justify-space-between align-center">
+                  <div>
+                    <div class="text-h4 mb-1">{{ analytics.confirmedAppointments }}</div>
+                    <div class="text-caption">Confirmed Appointments</div>
+                  </div>
+                  <v-icon size="48" :color="analytics.confirmedAppointments > 0 ? 'white' : 'success'">
+                    mdi-check-circle
+                  </v-icon>
+                </div>
+              </v-card-text>
+            </v-card>
+          </v-col>
+
+          <v-col cols="12" sm="6" md="3">
+            <v-card class="analytics-card" elevation="2" :color="analytics.totalSlots > 0 ? 'info' : ''">
+              <v-card-text>
+                <div class="d-flex justify-space-between align-center">
+                  <div>
+                    <div class="text-h4 mb-1">{{ analytics.totalSlots }}</div>
+                    <div class="text-caption">Available Time Slots</div>
+                  </div>
+                  <v-icon size="48" :color="analytics.totalSlots > 0 ? 'white' : 'info'">
+                    mdi-calendar-clock
+                  </v-icon>
+                </div>
+              </v-card-text>
+            </v-card>
+          </v-col>
+        </v-row>
+
         <!-- Error Alert -->
         <v-alert
           v-if="error"
@@ -595,7 +762,7 @@ onMounted(async () => {
                   :menu-props="{ maxHeight: 400 }"
                 >
                   <template v-slot:item="{ props, item }">
-                    <v-list-item v-bind="props">
+                    <v-list-item v-bind="props" :key="item.raw.key">
                       <template v-slot:prepend>
                         <v-icon icon="mdi-clock-outline"></v-icon>
                       </template>
@@ -920,6 +1087,18 @@ onMounted(async () => {
                 </div>
               </div>
 
+              <!-- Add notes input for cancellation -->
+              <v-textarea
+                v-if="actionDialogType === 'cancel' && selectedSlot.is_booked"
+                v-model="cancellationNotes"
+                label="Cancellation Notes"
+                placeholder="Add a note explaining the cancellation (optional)"
+                rows="3"
+                class="mt-4"
+                variant="outlined"
+                hide-details
+              ></v-textarea>
+
               <v-alert
                 v-if="actionDialogType === 'delete'"
                 type="warning"
@@ -1058,5 +1237,178 @@ onMounted(async () => {
 
 ::-webkit-scrollbar-thumb:hover {
   background: #666;
+}
+
+/* Add these styles to the existing <style> section */
+.analytics-card {
+  transition: all 0.3s ease;
+  border-radius: 12px;
+}
+
+.analytics-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.1) !important;
+}
+
+.analytics-card .v-card-text {
+  padding: 24px;
+}
+
+.analytics-card .text-h4 {
+  font-weight: 600;
+  color: inherit;
+}
+
+.analytics-card .text-caption {
+  font-size: 0.875rem;
+  opacity: 0.9;
+}
+
+.analytics-card .v-icon {
+  opacity: 0.9;
+  transition: transform 0.3s ease;
+}
+
+.analytics-card:hover .v-icon {
+  transform: scale(1.1);
+}
+
+/* Add styles for the time slot card */
+.time-slot-card {
+  border-left: 4px solid transparent;
+  transition: all 0.2s ease;
+}
+
+.time-slot-card.pending {
+  border-left-color: var(--v-warning-base);
+}
+
+.time-slot-card.confirmed {
+  border-left-color: var(--v-success-base);
+}
+
+.time-slot-card.available {
+  border-left-color: var(--v-info-base);
+}
+
+/* Add styles for better data table appearance */
+.v-data-table {
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.v-data-table .v-data-table__wrapper {
+  border-radius: 12px;
+}
+
+.v-data-table .v-data-table-header {
+  background-color: #f5f5f5;
+}
+
+.v-data-table .v-data-table-header th {
+  font-weight: 600;
+  color: #1976d2;
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  letter-spacing: 0.5px;
+}
+
+/* Add styles for better button interactions */
+.action-button {
+  transition: all 0.2s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.action-button::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 0;
+  height: 0;
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  transition: width 0.3s ease, height 0.3s ease;
+}
+
+.action-button:hover::after {
+  width: 200%;
+  height: 200%;
+}
+
+/* Add styles for the date picker */
+.v-date-picker {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.v-date-picker .v-date-picker-header {
+  padding: 16px;
+}
+
+.v-date-picker .v-date-picker-table {
+  padding: 16px;
+}
+
+/* Add styles for better form inputs */
+.v-text-field.v-text-field--outlined .v-input__control {
+  min-height: 44px;
+}
+
+.v-text-field.v-text-field--outlined .v-field__outline {
+  border-radius: 8px;
+}
+
+/* Add styles for better dialog appearance */
+.v-dialog .v-card {
+  border-radius: 16px;
+  overflow: hidden;
+}
+
+.v-dialog .v-card-title {
+  padding: 20px 24px;
+  font-size: 1.25rem;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.12);
+}
+
+.v-dialog .v-card-text {
+  padding: 24px;
+}
+
+/* Add loading state styles */
+.loading-overlay {
+  background: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(4px);
+}
+
+/* Add responsive adjustments */
+@media (max-width: 600px) {
+  .analytics-card .text-h4 {
+    font-size: 1.5rem;
+  }
+
+  .analytics-card .v-icon {
+    font-size: 36px;
+  }
+
+  .v-data-table .v-data-table-header th {
+    font-size: 0.7rem;
+  }
+}
+
+/* Add smooth scrolling */
+html {
+  scroll-behavior: smooth;
+}
+
+/* Add better focus styles */
+:focus {
+  outline: 2px solid #1976d2;
+  outline-offset: 2px;
+}
+
+:focus:not(:focus-visible) {
+  outline: none;
 }
 </style> 
