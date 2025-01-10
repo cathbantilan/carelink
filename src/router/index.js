@@ -1,8 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { supabase } from '@/supabase'
-import StaffDashboard from '@/views/StaffDashboard.vue';
-
-
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -18,35 +15,80 @@ const router = createRouter({
       component: () => import('@/views/RegisterView.vue')
     },
     {
-      path: '/dashboard',
-      name: 'dashboard',
-      component: () => import('@/views/DashboardView.vue'),
-      meta: { requiresAuth: true }
+      path: '/doctor-dashboard',
+      name: 'doctor-dashboard',
+      component: () => import('@/views/DoctorDashboard.vue'),
+      meta: { requiresAuth: true, role: 'Doctor' }
     },
     {
-      path: '/staff-dashboard',
-      name: 'staff-dashboard',
-      component: () => import('@/views/StaffDashboard.vue'),
+      path: '/patient-dashboard',
+      name: 'patient-dashboard',
+      component: () => import('@/views/PatientDashboard.vue'),
+      meta: { requiresAuth: true, role: 'Patient' }
     },
-    { 
-      path: '/profile-dashboard', 
-      name: 'profile-dashboard',
-      component: () => import('@/views/ProfileDashboard.vue') 
+    // Catch-all route for 404
+    {
+      path: '/:pathMatch(.*)*',
+      name: 'not-found',
+      redirect: '/'
     }
-    
   ]
 })
 
 // Navigation guard
 router.beforeEach(async (to, from, next) => {
-  const { data: { user } } = await supabase.auth.getUser()
+  try {
+    // Allow access to login and register without authentication
+    if (to.name === 'login' || to.name === 'register') {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (user) {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('role')
+          .eq('id', user.id)
+          .single()
 
-  if (to.meta.requiresAuth && !user) {
-    next('/')
-  } else if ((to.name === 'login' || to.name === 'register') && user) {
-    next('/dashboard')
-  } else {
+        if (profile?.role === 'Doctor') {
+          next({ name: 'doctor-dashboard' })
+        } else {
+          next({ name: 'patient-dashboard' })
+        }
+        return
+      }
+      next()
+      return
+    }
+
+    // Check authentication for protected routes
+    if (to.meta.requiresAuth) {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) {
+        next({ name: 'login' })
+        return
+      }
+
+      // Check role if required
+      if (to.meta.role) {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('role')
+          .eq('id', user.id)
+          .single()
+
+        if (profile?.role !== to.meta.role) {
+          if (profile?.role === 'Doctor') {
+            next({ name: 'doctor-dashboard' })
+          } else {
+            next({ name: 'patient-dashboard' })
+          }
+          return
+        }
+      }
+    }
     next()
+  } catch (error) {
+    console.error('Navigation guard error:', error)
+    next({ name: 'login' })
   }
 })
 

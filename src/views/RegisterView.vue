@@ -8,7 +8,7 @@ const router = useRouter()
 const loading = ref(false)
 const error = ref(null)
 
-const roles = ['Student', 'Staff']
+const roles = ['Patient', 'Doctor']
 
 const form = ref({
   role: '',
@@ -34,53 +34,28 @@ async function handleRegister() {
     loading.value = true
     error.value = null
 
-    if (form.value.password !== form.value.confirmPassword) {
-      throw new Error('Passwords do not match')
-    }
-
-    // 1. Create auth user
-    const { data: authData, error: authError } = await supabase.auth.signUp({
+    // Register the user
+    const { data: { user }, error: signUpError } = await supabase.auth.signUp({
       email: form.value.email,
       password: form.value.password,
-      options: {
-        data: {
-          id_number: form.value.id_number,
-          role: form.value.role,
-        }
-      }
     })
 
-    if (authError) throw authError
+    if (signUpError) throw signUpError
 
-    if (!authData.user?.id) {
-      throw new Error('No user id returned from authentication')
-    }
-
-    // 2. Insert profile data
+    // Create the profile
     const { error: profileError } = await supabase
       .from('profiles')
       .insert({
-        id: authData.user.id,
-        id_number: form.value.id_number,
+        id: user.id,
+        role: form.value.role,
         first_name: form.value.firstName,
         last_name: form.value.lastName,
-        email: form.value.email,
-        phone: form.value.phone,
-        role: form.value.role
+        email: form.value.email
       })
 
-    if (profileError) {
-      console.error('Profile creation error:', profileError)
-      // If profile creation fails, we should delete the auth user
-      await supabase.auth.admin.deleteUser(authData.user.id)
-      throw new Error('Failed to create profile. Please try again.')
-    }
+    if (profileError) throw profileError
 
-    // Show success message
-    alert('Registration successful! Please check your email to confirm your account.')
-    
-    // Redirect to login
-    router.push('/')
+    router.push('/login')
   } catch (e) {
     error.value = e.message
   } finally {
