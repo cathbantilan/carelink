@@ -53,7 +53,7 @@ async function handleLogin() {
         <!-- Right Side: Login Form -->
         <v-col cols="12" md="6">
           <v-card
-            class="login-form mx-auto"
+            class="login-form"
             color="grey-lighten-1"
             rounded="lg"
             elevation="8"
@@ -166,7 +166,7 @@ export default {
 .welcome-animation {
   font-size: 2.5rem;
   font-weight: bold;
-  background: linear-gradient(90deg, #4caf50, #8bc34a, #4caf50);
+  background: linear-gradient(90deg, rgb(0, 77, 13), rgb(120, 180, 50));
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   animation: gradientBounce 3s infinite, fadeInScale 1.5s ease-out;
@@ -231,4 +231,3 @@ export default {
   }
 }
 </style>
-
