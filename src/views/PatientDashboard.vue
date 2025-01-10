@@ -1211,4 +1211,227 @@ onMounted(async () => {
   border-radius: 50%;
   border: 2px solid white;
 }
+
+/* Responsive Layout */
+.v-container {
+  max-width: 100%;
+  padding: 16px;
+}
+
+/* Analytics Cards */
+.analytics-card {
+  height: 100%;
+  min-height: 120px;
+  transition: all 0.3s ease;
+}
+
+/* Doctor Selection */
+.doctor-select-card {
+  margin-bottom: 1rem;
+}
+
+/* Table Responsiveness */
+.responsive-table {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  margin-bottom: 1rem;
+  border-radius: 8px;
+}
+
+.v-data-table {
+  width: 100%;
+  min-width: 600px; /* Minimum width before horizontal scroll */
+}
+
+/* Card Layouts */
+.v-card {
+  width: 100%;
+  margin-bottom: 1rem;
+}
+
+/* Dialog Responsiveness */
+.v-dialog {
+  margin: 16px;
+  width: calc(100% - 32px) !important;
+  max-width: 500px !important;
+}
+
+/* Search and Filter Controls */
+.controls-wrapper {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 1rem;
+}
+
+.search-field {
+  flex: 1;
+  min-width: 200px;
+}
+
+.filter-select {
+  min-width: 150px;
+}
+
+/* Responsive Grid */
+.responsive-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+}
+
+/* Button Groups */
+.action-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* Responsive Typography */
+@media (max-width: 600px) {
+  .text-h4 {
+    font-size: 1.5rem !important;
+  }
+  
+  .text-h5 {
+    font-size: 1.25rem !important;
+  }
+  
+  .text-subtitle-1 {
+    font-size: 0.875rem !important;
+  }
+}
+
+/* Tablet Adjustments */
+@media (max-width: 960px) {
+  .v-col {
+    padding: 8px;
+  }
+
+  .controls-wrapper {
+    flex-direction: column;
+  }
+
+  .search-field,
+  .filter-select {
+    width: 100%;
+  }
+}
+
+/* Mobile Adjustments */
+@media (max-width: 600px) {
+  .v-container {
+    padding: 8px;
+  }
+
+  .v-card-title {
+    font-size: 1.25rem;
+    padding: 16px;
+  }
+
+  .v-card-text {
+    padding: 16px;
+  }
+
+  .action-buttons {
+    flex-direction: column;
+  }
+
+  .action-buttons .v-btn {
+    width: 100%;
+  }
+}
+
+/* Landscape Mode */
+@media (max-height: 600px) and (orientation: landscape) {
+  .v-container {
+    padding-top: 8px;
+    padding-bottom: 8px;
+  }
+
+  .v-dialog {
+    max-height: 90vh;
+    overflow-y: auto;
+  }
+}
+
+/* High DPI Screens */
+@media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 192dpi) {
+  .v-card {
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  }
+}
+
+/* Print Styles */
+@media print {
+  .v-btn,
+  .v-dialog,
+  .action-buttons {
+    display: none !important;
+  }
+
+  .v-card {
+    box-shadow: none !important;
+    border: 1px solid #ddd;
+  }
+}
+
+/* Utility Classes */
+.flex-grow {
+  flex-grow: 1;
+}
+
+.text-truncate {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sticky-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: white;
+}
+
+/* Animation Classes */
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.3s ease;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
+
+/* Accessibility */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* Dark Mode Support */
+@media (prefers-color-scheme: dark) {
+  .v-card {
+    background-color: #1E1E1E;
+  }
+
+  .text-medium-emphasis {
+    color: rgba(255, 255, 255, 0.7) !important;
+  }
+}
+
+/* Touch Device Optimizations */
+@media (hover: none) {
+  .v-btn:hover {
+    transform: none !important;
+  }
+
+  .v-card:hover {
+    transform: none !important;
+  }
+}
 </style> 

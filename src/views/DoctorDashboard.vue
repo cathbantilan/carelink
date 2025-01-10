@@ -1135,128 +1135,21 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-.v-card {
-  margin-bottom: 20px;
-  border-radius: 12px;
+/* Base Layout */
+.v-container {
+  max-width: 100%;
+  padding: 16px;
 }
 
-.text-h4 {
-  color: #1976d2;
-  font-weight: 600;
-}
-
-.text-h5 {
-  color: #1976d2;
-  font-weight: 500;
-}
-
-.v-data-table {
-  background-color: white;
-  border-radius: 8px;
-}
-
-.v-btn {
-  text-transform: none;
-  letter-spacing: 0.5px;
-}
-
-.v-btn--size-small {
-  min-width: 96px;
-}
-
-.gap-2 {
-  gap: 8px;
-}
-
-.v-card-title {
-  border-bottom: 1px solid rgba(0, 0, 0, 0.12);
-}
-
-.v-date-picker {
-  border-radius: 8px;
-  overflow: hidden;
-}
-
-/* Add hover effects */
-.v-btn:hover {
-  transform: translateY(-1px);
-  transition: transform 0.2s ease;
-}
-
-.v-chip {
-  font-weight: 500;
-}
-
-/* Add responsive styles */
-@media (max-width: 600px) {
-  .v-card-title {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .v-card-title .v-text-field {
-    margin-left: 0;
-    margin-top: 12px;
-    max-width: 100%;
-  }
-
-  .d-flex.justify-center.gap-2 {
-    flex-direction: column;
-  }
-
-  .v-btn--size-small {
-    width: 100%;
-  }
-}
-
-/* Add transitions */
-.v-card {
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
-}
-
-.v-card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1) !important;
-}
-
-/* Add custom scrollbar */
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-
-::-webkit-scrollbar-track {
-  background: #f1f1f1;
-  border-radius: 4px;
-}
-
-::-webkit-scrollbar-thumb {
-  background: #888;
-  border-radius: 4px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: #666;
-}
-
-/* Add these styles to the existing <style> section */
+/* Analytics Cards */
 .analytics-card {
+  height: 100%;
+  min-height: 120px;
   transition: all 0.3s ease;
-  border-radius: 12px;
 }
 
 .analytics-card:hover {
   transform: translateY(-4px);
-  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.1) !important;
-}
-
-.analytics-card .v-card-text {
-  padding: 24px;
-}
-
-.analytics-card .text-h4 {
-  font-weight: 600;
-  color: inherit;
 }
 
 .analytics-card .text-caption {
@@ -1269,43 +1162,25 @@ onMounted(async () => {
   transition: transform 0.3s ease;
 }
 
-.analytics-card:hover .v-icon {
-  transform: scale(1.1);
+/* Table Styles */
+.table-container {
+  overflow-x: auto;
+  margin: 0 -16px;
+  padding: 0 16px;
+  -webkit-overflow-scrolling: touch;
 }
 
-/* Add styles for the time slot card */
-.time-slot-card {
-  border-left: 4px solid transparent;
-  transition: all 0.2s ease;
-}
-
-.time-slot-card.pending {
-  border-left-color: var(--v-warning-base);
-}
-
-.time-slot-card.confirmed {
-  border-left-color: var(--v-success-base);
-}
-
-.time-slot-card.available {
-  border-left-color: var(--v-info-base);
-}
-
-/* Add styles for better data table appearance */
 .v-data-table {
+  width: 100%;
   border-radius: 12px;
   overflow: hidden;
 }
 
-.v-data-table .v-data-table__wrapper {
-  border-radius: 12px;
-}
-
 .v-data-table .v-data-table-header {
-  background-color: #f5f5f5;
-}
-
-.v-data-table .v-data-table-header th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: white;
   font-weight: 600;
   color: #1976d2;
   text-transform: uppercase;
@@ -1313,102 +1188,164 @@ onMounted(async () => {
   letter-spacing: 0.5px;
 }
 
-/* Add styles for better button interactions */
+/* Table cell styles */
+.v-data-table :deep(.v-data-table__wrapper) td,
+.v-data-table :deep(.v-data-table__wrapper) th {
+  padding: 8px 16px;
+  white-space: nowrap;
+}
+
+.v-data-table :deep(.v-data-table__wrapper) td.wrap-content {
+  white-space: normal;
+  min-width: 200px;
+  max-width: 300px;
+}
+
+/* Card and Dialog Styles */
+.v-card {
+  margin-bottom: 24px;
+  border-radius: 12px;
+}
+
+.v-dialog > .v-card {
+  margin-bottom: 0;
+}
+
+.v-card-title {
+  padding: 16px 24px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+/* Controls */
+.controls-wrapper {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.search-field {
+  flex: 1;
+  min-width: 200px;
+}
+
+.filter-select {
+  min-width: 150px;
+}
+
+/* Action Buttons */
+.action-buttons {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .action-button {
-  transition: all 0.2s ease;
-  position: relative;
-  overflow: hidden;
+  min-width: 100px;
 }
 
-.action-button::after {
-  content: '';
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 0;
-  height: 0;
-  background: rgba(255, 255, 255, 0.2);
-  border-radius: 50%;
-  transform: translate(-50%, -50%);
-  transition: width 0.3s ease, height 0.3s ease;
+/* Status Chips */
+.status-chip {
+  min-width: 90px;
+  justify-content: center;
 }
 
-.action-button:hover::after {
-  width: 200%;
-  height: 200%;
+.status-pending { background-color: #FFF3E0 !important; color: #E65100 !important; }
+.status-confirmed { background-color: #E8F5E9 !important; color: #2E7D32 !important; }
+.status-cancelled { background-color: #FFEBEE !important; color: #C62828 !important; }
+.status-completed { background-color: #E3F2FD !important; color: #1565C0 !important; }
+
+/* Notes Field */
+.notes-field {
+  min-height: 100px;
 }
 
-/* Add styles for the date picker */
-.v-date-picker {
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+/* Responsive Styles */
+@media (max-width: 960px) {
+  .v-container { padding: 12px; }
+  
+  .controls-wrapper {
+    flex-direction: column;
+  }
+
+  .search-field,
+  .filter-select {
+    width: 100%;
+  }
 }
 
-.v-date-picker .v-date-picker-header {
-  padding: 16px;
-}
-
-.v-date-picker .v-date-picker-table {
-  padding: 16px;
-}
-
-/* Add styles for better form inputs */
-.v-text-field.v-text-field--outlined .v-input__control {
-  min-height: 44px;
-}
-
-.v-text-field.v-text-field--outlined .v-field__outline {
-  border-radius: 8px;
-}
-
-/* Add styles for better dialog appearance */
-.v-dialog .v-card {
-  border-radius: 16px;
-  overflow: hidden;
-}
-
-.v-dialog .v-card-title {
-  padding: 20px 24px;
-  font-size: 1.25rem;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.12);
-}
-
-.v-dialog .v-card-text {
-  padding: 24px;
-}
-
-/* Add loading state styles */
-.loading-overlay {
-  background: rgba(255, 255, 255, 0.9);
-  backdrop-filter: blur(4px);
-}
-
-/* Add responsive adjustments */
 @media (max-width: 600px) {
-  .analytics-card .text-h4 {
-    font-size: 1.5rem;
+  .v-container { padding: 8px; }
+  
+  .v-card-title {
+    padding: 12px 16px;
+    flex-direction: column;
+    align-items: stretch;
   }
 
-  .analytics-card .v-icon {
-    font-size: 36px;
+  .v-card-text { padding: 16px; }
+
+  .action-buttons {
+    flex-direction: column;
   }
 
-  .v-data-table .v-data-table-header th {
-    font-size: 0.7rem;
+  .action-button {
+    width: 100%;
+  }
+
+  /* Mobile table adjustments */
+  .v-data-table :deep(.v-data-table__wrapper) {
+    overflow-x: auto;
+  }
+
+  .v-data-table :deep(.v-data-table__wrapper) table {
+    min-width: 800px;
+  }
+
+  .v-data-table :deep(.v-data-table__wrapper) td,
+  .v-data-table :deep(.v-data-table__wrapper) th {
+    padding: 8px;
+    font-size: 0.875rem;
   }
 }
 
-/* Add smooth scrolling */
-html {
-  scroll-behavior: smooth;
+/* Accessibility */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
 }
 
-/* Add better focus styles */
-:focus {
-  outline: 2px solid #1976d2;
-  outline-offset: 2px;
+/* Dark Mode */
+@media (prefers-color-scheme: dark) {
+  .v-data-table .v-data-table-header {
+    background: #1E1E1E;
+  }
+
+  .v-card {
+    background-color: #1E1E1E;
+  }
 }
 
-:focus:not(:focus-visible) {
-  outline: none;
+/* Print Styles */
+@media print {
+  .v-btn,
+  .v-dialog,
+  .action-buttons {
+    display: none !important;
+  }
+
+  .v-card {
+    box-shadow: none !important;
+    border: 1px solid #ddd;
+  }
+
+  .v-data-table {
+    width: 100% !important;
+  }
 }
 </style> 
