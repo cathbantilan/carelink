@@ -255,7 +255,7 @@
 
   <br>
   <br>
-  <h2 class="about text-center mt-5">About Us</h2>
+  <h1 class="about text-center mt-5">About Us</h1>
   <br>
   <p class="about1">Our platform is designed to connect students and staff with the university's healthcare services effortlessly. From booking general health consultations to dental exams, we aim to provide a seamless and efficient way to access quality care right on campus. Your health and convenience are our priority.</p>
 
