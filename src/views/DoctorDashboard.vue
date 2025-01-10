@@ -44,41 +44,95 @@ const durationOptions = [
   { value: 60, label: '1 hour' }
 ]
 
-onMounted(async () => {
-  await Promise.all([
-    fetchMySlots(),
-    fetchAppointments()
-  ])
-})
-
+// Helper function to format time
 function formatTime(time) {
-  const [hours, minutes] = time.split(':')
-  const hour = parseInt(hours)
-  const ampm = hour >= 12 ? 'PM' : 'AM'
-  const hour12 = hour % 12 || 12
-  return `${hour12}:${minutes} ${ampm}`
+  if (!time) return '';
+  try {
+    const [hours, minutes] = time.split(':')
+    const hour = parseInt(hours)
+    const ampm = hour >= 12 ? 'PM' : 'AM'
+    const hour12 = hour % 12 || 12
+    return `${hour12}:${minutes} ${ampm}`
+  } catch (e) {
+    console.error('Error formatting time:', e)
+    return ''
+  }
+}
+
+// Helper function to format date
+function formatDate(dateString) {
+  if (!dateString) return '';
+  try {
+    return new Date(dateString).toLocaleDateString('en-US', {
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric'
+    });
+  } catch (e) {
+    console.error('Error formatting date:', e)
+    return ''
+  }
+}
+
+// Helper function to get authenticated user
+async function getAuthUser() {
+  const { data: { user }, error } = await supabase.auth.getUser()
+  if (error) throw error
+  if (!user) throw new Error('No authenticated user found')
+  return user
 }
 
 async function fetchMySlots() {
   try {
     loading.value = true
-    const { data: { user } } = await supabase.auth.getUser()
+    const user = await getAuthUser()
     
     const { data, error: fetchError } = await supabase
       .from('available_slots')
-      .select('*')
+      .select(`
+        id,
+        date,
+        time,
+        duration,
+        is_booked,
+        notes,
+        appointments (
+          id,
+          status,
+          notes,
+          patient:patient_id (
+            first_name,
+            last_name,
+            email
+          )
+        )
+      `)
       .eq('doctor_id', user.id)
-      .order('date', { ascending: true })
-      .order('time', { ascending: true })
+      .order('date')
+      .order('time')
 
     if (fetchError) throw fetchError
     
-    availableSlots.value = data.map(slot => ({
-      ...slot,
-      formattedTime: formatTime(slot.time)
-    }))
+    availableSlots.value = (data || [])
+      .filter(slot => slot && slot.date && slot.time)
+      .map(slot => {
+        const appointment = slot.appointments?.[0]
+        return {
+          ...slot,
+          formattedTime: formatTime(slot.time),
+          formattedDate: formatDate(slot.date),
+          appointmentStatus: appointment?.status || null,
+          patientName: appointment?.patient 
+            ? `${appointment.patient.first_name} ${appointment.patient.last_name}`
+            : null
+        }
+      })
+
+    console.log(`Found ${availableSlots.value.length} total slots`)
   } catch (e) {
     error.value = e.message
+    console.error('Error fetching slots:', e)
   } finally {
     loading.value = false
   }
@@ -86,38 +140,51 @@ async function fetchMySlots() {
 
 async function fetchAppointments() {
   try {
-    const { data: { user } } = await supabase.auth.getUser()
+    loading.value = true
+    const user = await getAuthUser()
     
     const { data, error: fetchError } = await supabase
       .from('appointments')
       .select(`
-        *,
+        id,
+        status,
+        notes,
+        created_at,
         patient:patient_id (
-          email,
-          profiles (
-            first_name,
-            last_name
-          )
+          first_name,
+          last_name,
+          email
         ),
         slot:slot_id (
+          id,
           date,
           time,
           duration,
           notes
         )
       `)
-      .eq('slot:slot_id.doctor_id', user.id)
+      .eq('slot.doctor_id', user.id)
       .order('created_at', { ascending: false })
 
     if (fetchError) throw fetchError
 
-    appointments.value = data.map(appointment => ({
-      ...appointment,
-      formattedTime: formatTime(appointment.slot.time),
-      patientName: `${appointment.patient.profiles[0].first_name} ${appointment.patient.profiles[0].last_name}`
-    }))
+    appointments.value = (data || [])
+      .filter(appointment => appointment?.slot?.date && appointment?.slot?.time)
+      .map(appointment => ({
+        ...appointment,
+        formattedTime: formatTime(appointment.slot.time),
+        formattedDate: formatDate(appointment.slot.date),
+        patientName: appointment.patient 
+          ? `${appointment.patient.first_name} ${appointment.patient.last_name}`
+          : 'Unknown Patient'
+      }))
+
+    console.log(`Found ${appointments.value.length} appointments`)
   } catch (e) {
     error.value = e.message
+    console.error('Error fetching appointments:', e)
+  } finally {
+    loading.value = false
   }
 }
 
@@ -129,12 +196,21 @@ async function addTimeSlot() {
 
   try {
     loading.value = true
-    const { data: { user } } = await supabase.auth.getUser()
+    const user = await getAuthUser()
+
+    // Validate the date
+    const slotDate = new Date(newSlot.value.date)
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    
+    if (slotDate < today) {
+      throw new Error('Cannot create slots for past dates')
+    }
 
     // Check for existing slot
     const { data: existingSlot } = await supabase
       .from('available_slots')
-      .select('*')
+      .select('id')
       .eq('date', newSlot.value.date)
       .eq('time', newSlot.value.time)
       .eq('doctor_id', user.id)
@@ -151,40 +227,45 @@ async function addTimeSlot() {
         doctor_id: user.id,
         date: newSlot.value.date,
         time: newSlot.value.time,
-        duration: newSlot.value.duration,
-        notes: newSlot.value.notes,
+        duration: newSlot.value.duration || 30,
+        notes: newSlot.value.notes || '',
         is_booked: false
       })
 
     if (insertError) throw insertError
 
+    // Reset form and refresh data
+    newSlot.value = { date: null, time: '', duration: 30, notes: '' }
     await Promise.all([
       fetchMySlots(),
       fetchAppointments()
     ])
-    
-    newSlot.value = { date: null, time: '', duration: 30, notes: '' }
   } catch (e) {
     error.value = e.message
+    console.error('Error adding time slot:', e)
   } finally {
     loading.value = false
   }
 }
 
 async function updateAppointmentStatus(appointment, newStatus) {
+  if (!appointment?.id) return;
+  
   try {
     loading.value = true
+    const updates = { 
+      status: newStatus,
+      notes: newStatus === 'confirmed' ? doctorNotes.value : null 
+    }
+
     const { error: updateError } = await supabase
       .from('appointments')
-      .update({ 
-        status: newStatus,
-        notes: newStatus === 'confirmed' ? doctorNotes.value : null 
-      })
+      .update(updates)
       .eq('id', appointment.id)
 
     if (updateError) throw updateError
 
-    if (newStatus === 'cancelled') {
+    if (newStatus === 'cancelled' && appointment.slot_id) {
       const { error: slotError } = await supabase
         .from('available_slots')
         .update({ is_booked: false })
@@ -203,12 +284,14 @@ async function updateAppointmentStatus(appointment, newStatus) {
     ])
   } catch (e) {
     error.value = e.message
+    console.error('Error updating appointment status:', e)
   } finally {
     loading.value = false
   }
 }
 
 function openNotesDialog(appointment) {
+  if (!appointment) return;
   selectedAppointment.value = appointment
   doctorNotes.value = appointment.notes || ''
   showNotesDialog.value = true
@@ -217,37 +300,41 @@ function openNotesDialog(appointment) {
 async function handleLogout() {
   try {
     loading.value = true
-    const { error } = await supabase.auth.signOut()
-    if (error) throw error
+    const { error: signOutError } = await supabase.auth.signOut()
+    if (signOutError) throw signOutError
     router.push('/login')
   } catch (e) {
     error.value = e.message
+    console.error('Error during logout:', e)
   } finally {
     loading.value = false
   }
 }
 
 async function updateSlotStatus(slot) {
+  if (!slot?.id) return;
+  
   try {
     loading.value = true
+    const updates = { 
+      is_booked: !slot.is_booked,
+      notes: !slot.is_booked ? 'Marked as unavailable by doctor' : null
+    }
+
     const { error: updateError } = await supabase
       .from('available_slots')
-      .update({ 
-        is_booked: !slot.is_booked,
-        // If marking as unavailable, add a note
-        notes: !slot.is_booked ? 'Marked as unavailable by doctor' : null
-      })
+      .update(updates)
       .eq('id', slot.id)
 
     if (updateError) throw updateError
 
     // If marking as unavailable and there's an appointment, cancel it
-    if (!slot.is_booked && slot.appointments?.[0]) {
+    if (!slot.is_booked && slot.appointments?.[0]?.id) {
       const { error: appointmentError } = await supabase
         .from('appointments')
         .update({ 
           status: 'cancelled',
-          notes: 'Cancelled by doctor - slot marked as unavailable'
+          notes: 'Cancelled - slot marked as unavailable by doctor'
         })
         .eq('id', slot.appointments[0].id)
 
@@ -260,10 +347,23 @@ async function updateSlotStatus(slot) {
     ])
   } catch (e) {
     error.value = e.message
+    console.error('Error updating slot status:', e)
   } finally {
     loading.value = false
   }
 }
+
+onMounted(async () => {
+  try {
+    await Promise.all([
+      fetchMySlots(),
+      fetchAppointments()
+    ])
+  } catch (e) {
+    error.value = e.message
+    console.error('Error during initialization:', e)
+  }
+})
 </script>
 
 <template>

@@ -14,17 +14,52 @@ const error = ref(null)
 const hasAvailableDoctors = computed(() => doctors.value.length > 0)
 const noAvailableDoctors = computed(() => !loading.value && doctors.value.length === 0)
 
-onMounted(async () => {
-  await Promise.all([
-    fetchDoctors(),
-    fetchMyAppointments()
-  ])
-})
+// Helper function to format time
+function formatTime(time) {
+  if (!time) return '';
+  try {
+    const [hours, minutes] = time.split(':')
+    const hour = parseInt(hours)
+    const ampm = hour >= 12 ? 'PM' : 'AM'
+    const hour12 = hour % 12 || 12
+    return `${hour12}:${minutes} ${ampm}`
+  } catch (e) {
+    console.error('Error formatting time:', e)
+    return ''
+  }
+}
 
-// Fetch all doctors
+// Helper function to format date
+function formatDate(dateString) {
+  if (!dateString) return '';
+  try {
+    return new Date(dateString).toLocaleDateString('en-US', {
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric'
+    });
+  } catch (e) {
+    console.error('Error formatting date:', e)
+    return ''
+  }
+}
+
+// Helper function to get authenticated user
+async function getAuthUser() {
+  const { data: { user }, error } = await supabase.auth.getUser()
+  if (error) throw error
+  if (!user) throw new Error('No authenticated user found')
+  return user
+}
+
+// Fetch all doctors with their available slots
 async function fetchDoctors() {
   try {
     loading.value = true
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+
     const { data, error: fetchError } = await supabase
       .from('profiles')
       .select(`
@@ -32,32 +67,46 @@ async function fetchDoctors() {
         first_name,
         last_name,
         specialty,
-        available_slots!inner (
+        email,
+        available_slots!left (
           id,
           date,
           time,
-          is_booked
+          duration,
+          is_booked,
+          notes
         )
       `)
       .eq('role', 'Doctor')
-      .eq('available_slots.is_booked', false)
-      .gte('available_slots.date', new Date().toISOString().split('T')[0])
 
     if (fetchError) throw fetchError
 
-    // Filter and format doctors data
-    doctors.value = data
-      .filter(doctor => doctor.available_slots && doctor.available_slots.length > 0)
-      .map(doctor => ({
-        id: doctor.id,
-        first_name: doctor.first_name,
-        last_name: doctor.last_name,
-        specialty: doctor.specialty || 'General Practice',
-        fullName: `Dr. ${doctor.first_name} ${doctor.last_name}`,
-        availableSlots: doctor.available_slots.length
-      }))
+    // Process doctors data
+    doctors.value = (data || [])
+      .map(doctor => {
+        // Filter available slots for this doctor
+        const availableSlots = (doctor.available_slots || []).filter(slot => {
+          if (!slot?.date || !slot?.time) return false;
+          const slotDate = new Date(slot.date)
+          slotDate.setHours(0, 0, 0, 0)
+          return !slot.is_booked && slotDate >= today
+        })
 
-    // Try to restore selected doctor from localStorage
+        return {
+          id: doctor.id,
+          first_name: doctor.first_name,
+          last_name: doctor.last_name,
+          specialty: doctor.specialty || 'General Practice',
+          fullName: `Dr. ${doctor.first_name} ${doctor.last_name}`,
+          email: doctor.email,
+          availableSlots: availableSlots.length,
+          slots: availableSlots
+        }
+      })
+      .filter(doctor => doctor.availableSlots > 0)
+      .sort((a, b) => b.availableSlots - a.availableSlots)
+
+    // Restore selected doctor if exists
     const savedDoctorId = localStorage.getItem('selectedDoctorId')
     if (savedDoctorId) {
       const savedDoctor = doctors.value.find(d => d.id === savedDoctorId)
@@ -68,85 +117,94 @@ async function fetchDoctors() {
     }
   } catch (e) {
     error.value = e.message
+    console.error('Error fetching doctors:', e)
   } finally {
     loading.value = false
   }
 }
 
-// Watch for selected doctor changes
-async function handleDoctorChange() {
-  if (selectedDoctor.value) {
-    localStorage.setItem('selectedDoctorId', selectedDoctor.value.id)
-    await fetchAvailableSlots(selectedDoctor.value)
-  } else {
-    localStorage.removeItem('selectedDoctorId')
-    availableSlots.value = []
-  }
-}
-
-function formatTime(time) {
-  const [hours, minutes] = time.split(':')
-  const hour = parseInt(hours)
-  const ampm = hour >= 12 ? 'PM' : 'AM'
-  const hour12 = hour % 12 || 12
-  return `${hour12}:${minutes} ${ampm}`
-}
-
-async function fetchAvailableSlots(doctorId) {
+// Fetch available slots for selected doctor
+async function fetchAvailableSlots(doctor) {
+  if (!doctor?.id) return;
+  
   try {
     loading.value = true
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+
     const { data, error: fetchError } = await supabase
       .from('available_slots')
       .select(`
-        *,
+        id,
+        date,
+        time,
+        duration,
+        is_booked,
+        notes,
         doctor:doctor_id (
           id,
-          email,
-          profiles (
-            first_name,
-            last_name,
-            specialty
-          )
+          first_name,
+          last_name,
+          specialty,
+          email
         )
       `)
-      .eq('doctor_id', doctorId.id)
+      .eq('doctor_id', doctor.id)
       .eq('is_booked', false)
-      .gte('date', new Date().toISOString().split('T')[0])
-      .order('date', { ascending: true })
-      .order('time', { ascending: true })
+      .gte('date', today.toISOString().split('T')[0])
+      .order('date')
+      .order('time')
 
     if (fetchError) throw fetchError
 
-    availableSlots.value = data.map(slot => ({
-      ...slot,
-      formattedTime: formatTime(slot.time),
-      doctorName: `Dr. ${slot.doctor.profiles[0].first_name} ${slot.doctor.profiles[0].last_name}`,
-      specialty: slot.doctor.profiles[0].specialty
-    }))
+    // Map and filter slots
+    availableSlots.value = (data || [])
+      .filter(slot => {
+        if (!slot?.date || !slot?.time) return false;
+        const slotDate = new Date(slot.date)
+        slotDate.setHours(0, 0, 0, 0)
+        return slotDate >= today
+      })
+      .map(slot => ({
+        ...slot,
+        formattedTime: formatTime(slot.time),
+        formattedDate: formatDate(slot.date),
+        doctorName: slot.doctor ? `Dr. ${slot.doctor.first_name} ${slot.doctor.last_name}` : '',
+        specialty: slot.doctor?.specialty || 'General Practice'
+      }))
+
+    console.log(`Found ${availableSlots.value.length} available slots for doctor ${doctor.fullName}`)
   } catch (e) {
     error.value = e.message
+    console.error('Error fetching available slots:', e)
   } finally {
     loading.value = false
   }
 }
 
+// Fetch appointments for the current patient
 async function fetchMyAppointments() {
   try {
-    const { data: { user } } = await supabase.auth.getUser()
+    const user = await getAuthUser()
     
     const { data, error: fetchError } = await supabase
       .from('appointments')
       .select(`
-        *,
+        id,
+        status,
+        notes,
+        created_at,
         slot:slot_id (
+          id,
           date,
           time,
+          duration,
+          notes,
           doctor:doctor_id (
-            profiles (
-              first_name,
-              last_name,
-              specialty
-            )
+            first_name,
+            last_name,
+            specialty,
+            email
           )
         )
       `)
@@ -155,23 +213,33 @@ async function fetchMyAppointments() {
 
     if (fetchError) throw fetchError
 
-    myAppointments.value = data.map(appointment => ({
-      ...appointment,
-      formattedTime: formatTime(appointment.slot.time),
-      doctorName: `Dr. ${appointment.slot.doctor.profiles[0].first_name} ${appointment.slot.doctor.profiles[0].last_name}`,
-      specialty: appointment.slot.doctor.profiles[0].specialty
-    }))
+    myAppointments.value = (data || [])
+      .filter(appointment => appointment?.slot?.date && appointment?.slot?.time)
+      .map(appointment => ({
+        ...appointment,
+        formattedTime: formatTime(appointment.slot.time),
+        formattedDate: formatDate(appointment.slot.date),
+        doctorName: appointment.slot.doctor 
+          ? `Dr. ${appointment.slot.doctor.first_name} ${appointment.slot.doctor.last_name}`
+          : 'Unknown Doctor',
+        specialty: appointment.slot.doctor?.specialty || 'General Practice',
+        date: appointment.slot.date
+      }))
   } catch (e) {
     error.value = e.message
+    console.error('Error fetching appointments:', e)
   }
 }
 
+// Book an appointment
 async function bookAppointment(slot) {
+  if (!slot?.id) return;
+  
   try {
     loading.value = true
-    const { data: { user } } = await supabase.auth.getUser()
+    const user = await getAuthUser()
 
-    // Create appointment
+    // Start a transaction by using multiple operations
     const { error: appointmentError } = await supabase
       .from('appointments')
       .insert({
@@ -182,7 +250,6 @@ async function bookAppointment(slot) {
 
     if (appointmentError) throw appointmentError
 
-    // Update slot status
     const { error: slotError } = await supabase
       .from('available_slots')
       .update({ is_booked: true })
@@ -190,18 +257,23 @@ async function bookAppointment(slot) {
 
     if (slotError) throw slotError
 
+    // Refresh data
     await Promise.all([
       fetchAvailableSlots(selectedDoctor.value),
       fetchMyAppointments()
     ])
   } catch (e) {
     error.value = e.message
+    console.error('Error booking appointment:', e)
   } finally {
     loading.value = false
   }
 }
 
+// Cancel an appointment
 async function cancelAppointment(appointment) {
+  if (!appointment?.id || !appointment?.slot_id) return;
+  
   try {
     loading.value = true
 
@@ -227,23 +299,72 @@ async function cancelAppointment(appointment) {
     ])
   } catch (e) {
     error.value = e.message
+    console.error('Error cancelling appointment:', e)
   } finally {
     loading.value = false
+  }
+}
+
+// Delete a cancelled appointment
+async function deleteAppointment(appointment) {
+  if (!appointment?.id) return;
+  
+  try {
+    loading.value = true
+    
+    const { error: deleteError } = await supabase
+      .from('appointments')
+      .delete()
+      .eq('id', appointment.id)
+      .eq('status', 'cancelled') // Extra safety check
+
+    if (deleteError) throw deleteError
+
+    await fetchMyAppointments()
+  } catch (e) {
+    error.value = e.message
+    console.error('Error deleting appointment:', e)
+  } finally {
+    loading.value = false
+  }
+}
+
+// Handle doctor selection change
+async function handleDoctorChange() {
+  if (selectedDoctor.value?.id) {
+    localStorage.setItem('selectedDoctorId', selectedDoctor.value.id)
+    await fetchAvailableSlots(selectedDoctor.value)
+  } else {
+    localStorage.removeItem('selectedDoctorId')
+    availableSlots.value = []
   }
 }
 
 async function handleLogout() {
   try {
     loading.value = true
-    const { error } = await supabase.auth.signOut()
-    if (error) throw error
+    const { error: signOutError } = await supabase.auth.signOut()
+    if (signOutError) throw signOutError
     router.push('/login')
   } catch (e) {
     error.value = e.message
+    console.error('Error during logout:', e)
   } finally {
     loading.value = false
   }
 }
+
+onMounted(async () => {
+  try {
+    await Promise.all([
+      fetchDoctors(),
+      fetchMyAppointments()
+    ])
+  } catch (e) {
+    error.value = e.message
+    console.error('Error during initialization:', e)
+  }
+})
 </script>
 
 <template>
@@ -416,14 +537,25 @@ async function handleLogout() {
               </template>
 
               <template v-slot:item.actions="{ item }">
-                <v-btn
-                  v-if="item.status !== 'cancelled'"
-                  color="error"
-                  size="small"
-                  @click="cancelAppointment(item)"
-                >
-                  Cancel
-                </v-btn>
+                <div class="d-flex gap-2">
+                  <v-btn
+                    v-if="item.status !== 'cancelled'"
+                    color="error"
+                    size="small"
+                    @click="cancelAppointment(item)"
+                  >
+                    Cancel
+                  </v-btn>
+                  <v-btn
+                    v-if="item.status === 'cancelled'"
+                    color="error"
+                    size="small"
+                    variant="outlined"
+                    @click="deleteAppointment(item)"
+                  >
+                    Delete
+                  </v-btn>
+                </div>
               </template>
             </v-data-table>
           </v-card-text>
@@ -471,5 +603,20 @@ async function handleLogout() {
 
 .specialty-chip {
   margin-left: 8px;
+}
+
+.gap-2 {
+  gap: 8px;
+}
+
+/* Add styles for action buttons */
+.d-flex.gap-2 {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+}
+
+.v-btn.v-btn--size-small {
+  min-width: 80px;
 }
 </style> 
